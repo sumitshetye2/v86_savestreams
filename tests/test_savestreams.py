@@ -7,8 +7,7 @@
     This module contains unit tests for both the public and private API
     of the v86_savestreams module
 """
-    
-import os
+
 import json
 import struct
 import tempfile
@@ -16,9 +15,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import numpy as np
 
-from v86_savestreams.savestreams import (
+from v86_savestreams import (
     # Public API
     encode, decode, decode_one, decode_len,
     
@@ -56,8 +54,6 @@ def create_mock_savestates(count=3):
         savestates.append(savestate)
         components.append(component)
     return savestates, components
-
-
 
 
 
@@ -367,6 +363,7 @@ def test_custom_super_block_size():
         
 
 # Tests for CLI functionality
+@pytest.fixture
 def temp_dir():
     """Create a temporary dictionary for CLI tests"""
     with tempfile.TemporaryDirectory() as temp_dir:
