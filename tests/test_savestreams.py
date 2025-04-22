@@ -126,7 +126,7 @@ def test_make_aligned_buffer_block():
 def test_make_unaligned_buffer_block():
     """Test the _make_unaligned_buffer_block function"""
     # Create a mock info block with multiple buffers
-    buffer_content = 'b0123456789ABCDE'
+    buffer_content = b'0123456789ABCDE'
     buffer_infos = [
         {"offset": 0, "length": 10},
         {"offset": 10, "length": 5}
@@ -139,7 +139,7 @@ def test_make_unaligned_buffer_block():
     aligned_buffer = _make_aligned_buffer_block(info_block, buffer_content, block_size)
     
     # Then convert back to unaligned buffer
-    unaligned_buffer = _make_unaligned_buffer_block(info_block, aligned_buffer)
+    unaligned_buffer = _make_unaligned_buffer_block(info_block, aligned_buffer, block_size)
     
     # The unaligned buffer should contain the original content, but offsets might be different
     # Extract the content based on the new buffer_infos
