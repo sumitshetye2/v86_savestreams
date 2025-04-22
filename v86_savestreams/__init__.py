@@ -364,16 +364,16 @@ def decode_len(savestream_bytes: bytes) -> int:
     return len(incremental_saves)
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     import sys
     import os
     
     parser = argparse.ArgumentParser(description="v86 Savestream Utility")
-    subparsers = parser.add_subparsers(dest="command", helo="Commmand to execute")
+    subparsers = parser.add_subparsers(dest="command", help="Commmand to execute")
     
     # Encode command
-    encode_parser = subparsers.add_parser("encode", helo="Encode v86 savestates into a savestream")
+    encode_parser = subparsers.add_parser("encode", help="Encode v86 savestates into a savestream")
     encode_parser.add_argument("input_files", nargs="+", help="Input v86 savestate files")
     encode_parser.add_argument("output_files", help="Output savestream file")
     encode_parser.add_argument("--block_size", type=int, default=256, help="Block size for deduplication. Defaults to 256 bytes")
@@ -446,3 +446,6 @@ if __name__ == "__main__":
     else:
         parser.print_help()
         sys.exit(1)  
+
+if __name__ == "__main__":
+    main()

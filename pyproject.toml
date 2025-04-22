@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Efficient compression and decompression of v86 virtual machine save states"
 readme = "README.md"
 requires-python = ">=3.7"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Sumit Shetye", email = "sshetye@ucsc.edu"}
 ]
@@ -19,12 +19,15 @@ dependencies = [
     "jsonpatch>=1.32",
 ]
 
+[project.scripts]
+savestreams = "v86_savestreams:main"
+
 [project.urls]
 "Homepage" = "https://github.com/sumitshetye2/v86_savestreams"
 "Bug Tracker" = "https://github.com/sumitshetye2/v86_savestreams/issues"
 
 [tool.setuptools]
-packages = ["v86savestreams"]
+packages = ["v86_savestreams"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
