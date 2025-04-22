@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/sumitshetye2/v86-savestreams"
-"Bug Tracker" = https://github.com/sumitshetye2/v86-savestreams/issues
+"Homepage" = "https://github.com/sumitshetye2/v86_savestreams"
+"Bug Tracker" = "https://github.com/sumitshetye2/v86_savestreams/issues"
 
 [tool.setuptools]
 packages = ["v86savestreams"]
