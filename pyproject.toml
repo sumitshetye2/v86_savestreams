@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "v86-savestreams"
+version = "0.1.0"
+description = "Efficient compression and decompression of v86 virtual machine save states"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "Sumit Shetye", email = "sshetye@ucsc.edu"}
+]
+
+dependencies = [
+    "numpy>=1.18.0",
+    "msgpack>=1.0.0",
+    "jsonpatch>=1.32",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/sumitshetye2/v86-savestreams"
+"Bug Tracker" = https://github.com/sumitshetye2/v86-savestreams/issues
+
+[tool.setuptools]
+packages = ["v86savestreams"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
