@@ -17,9 +17,24 @@ pip install .
 
 ## Usage
 
+
+
 ```sh
-savestreams [optional options]
+savestreams encode state0.bin state1.bin state2.bin > some.savestream
 ```
+
+```sh
+savestreams length some.savestream # 3
+```
+
+```sh
+savestreams decode some.savestream 2 > state2.bin
+```
+
+```sh
+savestreams trim some.savestream 50 250 > trimmed.savestream
+```
+
 
 ## Testing
 
