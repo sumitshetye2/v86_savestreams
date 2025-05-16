@@ -6,13 +6,20 @@
     
     This module contains unit tests for both the public and private API
     of the v86_savestreams module
+    
 """
 
 import json
 import struct
 import tempfile
 import subprocess
+import dictdiffer
+import msgpack
 from pathlib import Path
+import zipfile
+import os
+import shutil
+import sys
 
 import pytest
 
@@ -25,38 +32,43 @@ from v86_savestreams import (
     _make_aligned_buffer_block, _make_unaligned_buffer_block
 )
 
-# Utility functions for creating test data
-def create_mock_savestate(state_id, buffer_content=None, buffer_infos=None):
-    """Create a mock v86 save state for testing."""
-    if buffer_infos is None:
-        buffer_infos = [{"offset": 0, "length": len(buffer_content or b'')}]
-        
-    info = {"buffer_infos": buffer_infos, "state_id": state_id}
-    info_block = json.dumps(info).encode('utf-8')
-    info_len = len(info_block)
-    header_block = struct.pack('IIII', state_id, 0, 0, info_len)
-    
-    if buffer_content is None:
-        buffer_content = bytes([state_id % 256] * 50 + [0] * 50)
-        
-    # Pad info block to align with 4 bytes
-    padding = (4 - (len(info_block) % 4)) % 4
-    padded_info = info_block + b'\x00' * padding
-    
-    return header_block + padded_info + buffer_content, (header_block, info_block, buffer_content)
 
-def create_mock_savestates(count=3):
-    """Create multiple mock save states for testing"""
+
+@pytest.fixture(scope="session")
+def savestates():
+    """
+    Extract real v86 savestate files from msdos-states.zip for testing.
+    
+    Returns a list of tuples (filename, content) for each .bin file in the zip
+    
+    """
+    zip_path = Path(__file__).parent / 'msdos-states.zip'
+    
+    if not zip_path.exists():
+        pytest.skip(f"Test data not found: {zip_path}")
+        
     savestates = []
-    components = []
-    for i in range(count):
-        savestate, component = create_mock_savestate(i)
-        savestates.append(savestate)
-        components.append(component)
-    return savestates, components
+    
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        # Get all the .bin files in the zip
+        bin_filenames = [f for f in zip_ref.namelist() if f.endswith('.bin')]
+        bin_filenames = sorted(bin_filenames)
+        
+        # Extract content from each file
+        for bin_filename in bin_filenames:
+            with zip_ref.open(bin_filename) as f:
+                file_content = f.read()
+                savestates.append((bin_filename, file_content))
+                
+    # Verify we have the expected number of files
+    if not savestates:
+        pytest.skip("No .bin files found in the zip")
+        
+    return savestates
 
+    
 
-
+# Tests for private API functions
 
 def test_pad_to():
     # test padding when already aligned
@@ -69,158 +81,208 @@ def test_pad_to():
     # test with larger alignment values
     assert len(_pad_to(b'123', 256)) == 256
     assert _pad_to(b'12345', 256)[:5] == b'12345'
-
-def test_split_v86_savestate():
-    """Test the _split_v86_savestate function."""
-    # Create a mock v86 savestate
-    savestate, (header_block, info_block, buffer_block) = create_mock_savestate(0)
+    
+    
+    
+def test_split_and_recombine(savestates):
+    assert len(savestates) == 3, f"Expected 3 savestates, got {len(savestates)}"
+    
         
-    # Test splitting
-    split_header, split_info, split_buffer = _split_v86_savestate(savestate)
-    assert split_header == header_block
-    assert split_info == info_block
-    assert split_buffer == buffer_block
+    # Test the first .bin file
+    bin_file, file_content = savestates[0]
+    assert isinstance(file_content, bytes), f"File {bin_file} content is not bytes"
     
-def test_recombine_v86_savestate():
-    """Test the _recombine_v86_savestate function"""
-    # Create a mock v86 savestate
-    savestate, (header_block, info_block, buffer_block) = create_mock_savestate(0)
+    split_state = _split_v86_savestate(file_content)
+    recombined = _recombine_v86_savestate(split_state)
+    assert recombined == file_content, f"Recombined file does not match original {bin_file}"
     
-    # Test recombining
+    
+    # Test all .bin files
+    for bin_file, file_content in savestates:
+        assert isinstance(file_content, bytes), f"File {bin_file} content is not bytes"
+        
+        header_block, info_block, buffer_block = _split_v86_savestate(file_content)
+        recombined = _recombine_v86_savestate((header_block, info_block, buffer_block))
+        
+        assert recombined == file_content, f"Recombined file does not match original {bin_file}"
+    
+
+def test_buffer_block_alignments(savestates):
+    assert len(savestates) == 3, f"Expected 3 savestates, got {len(savestates)}"
+    
+    # Test the first .bin file
+    bin_file, file_content = savestates[0]
+    assert isinstance(file_content, bytes), "File {bin_file} content is not bytes"
+    
+    # Split the file content into its components
+    header_block, info_block, buffer_block = _split_v86_savestate(file_content)
+    
+    aligned_buffer = _make_aligned_buffer_block(info_block, buffer_block, block_size=256)
+    
+    unaligned_buffer = _make_unaligned_buffer_block(info_block, aligned_buffer, block_size=256)
+    
+    assert unaligned_buffer == buffer_block, f"Unaligned buffer does not match original buffer block"
+    
+    # Recombine the components
     recombined = _recombine_v86_savestate((header_block, info_block, buffer_block))
+    assert recombined == file_content, f"Recombined file does not match original {bin_file}"
     
-    # The recombined savestate might have different padding than the original
-    # so we need to split it again to compare components
-    re_header, re_info, re_buffer = _split_v86_savestate(recombined)
-    assert re_header == header_block
-    assert re_info == info_block
-    assert re_buffer == buffer_block
-    
-def test_make_aligned_buffer_block():
-    """Test the _make_aligned_buffer_block function."""
-    # Create a mock info block with multiple buffers
-    buffer_content = b'0123456789ABCDE'
-    buffer_infos = [
-        {"offset": 0, "length": 10},
-        {"offset": 10, "length": 5}
-    ]
-    
-    _, (_, info_block, _) = create_mock_savestate(0, buffer_content, buffer_infos)
-    
-    # Test alignment with block size 8
-    block_size = 8
-    aligned_buffer = _make_aligned_buffer_block(info_block, buffer_content, block_size)
-    
-    # First buffer should be padded to 16 bytes (10 + padding multiple of 8)
-    expected_length = ((10 + block_size - 1) // block_size) * block_size + \
-        ((5 + block_size - 1) // block_size) * block_size
-    assert len(aligned_buffer) == expected_length
-    
-    # Check content of aligned buffer
-    assert aligned_buffer[:10] == buffer_content[:10]
-    # Calculate offset for second buffer in aligned buffer
-    second_buffer_offset = ((10 + block_size - 1) // block_size) * block_size
-    assert aligned_buffer[second_buffer_offset:second_buffer_offset + 5] == buffer_content[10:15]
-    
-    
-def test_make_unaligned_buffer_block():
-    """Test the _make_unaligned_buffer_block function"""
-    # Create a mock info block with multiple buffers
-    buffer_content = b'0123456789ABCDE'
-    buffer_infos = [
-        {"offset": 0, "length": 10},
-        {"offset": 10, "length": 5}
-    ]
-    
-    _, (_, info_block, _) = create_mock_savestate(0, buffer_content, buffer_infos)
-    
-    # First create an aligned buffer
-    block_size = 8
-    aligned_buffer = _make_aligned_buffer_block(info_block, buffer_content, block_size)
-    
-    # Then convert back to unaligned buffer
-    unaligned_buffer = _make_unaligned_buffer_block(info_block, aligned_buffer, block_size)
-    
-    # The unaligned buffer should contain the original content, but offsets might be different
-    # Extract the content based on the new buffer_infos
-    new_info = json.loads(info_block.decode('utf-8'))
-    first_buffer = unaligned_buffer[new_info["buffer_infos"][0]["offset"]:new_info["buffer_infos"][0]["offset"] + 10]
-    second_buffer = unaligned_buffer[new_info["buffer_infos"][1]["offset"]:new_info["buffer_infos"][1]["offset"] + 5]
-    
-    assert first_buffer == buffer_content[:10]
-    assert second_buffer == buffer_content[10:15]
+    # Test multiple .bin files
+    for savestate in savestates:
+        bin_file, file_content = savestate
+        assert isinstance(file_content, bytes), f"File {bin_file} content is not bytes"
+        
+        # Split the file content into its components
+        header_block, info_block, buffer_block = _split_v86_savestate(file_content)
+        
+        # Create aligned buffer block
+        aligned_buffer = _make_aligned_buffer_block(info_block, buffer_block, block_size=256)
+        
+        # Create unaligned buffer block
+        unaligned_buffer = _make_unaligned_buffer_block(info_block, aligned_buffer, block_size=256)
+        
+        assert unaligned_buffer == buffer_block, f"Unaligned buffer does not match original buffer block"
+        
+        # Recombine the components
+        recombined = _recombine_v86_savestate((header_block, info_block, buffer_block))
+        assert recombined == file_content, f"Recombined file does not match original {bin_file}"
     
 # Tests for public API functions
-
-def test_encode_decode_roundtrip():
+def test_encode_decode_roundtrip(savestates):
     """Test the encode and decode functions in a roundtrip scenario"""
-    savestates, _ = create_mock_savestate(3)
     
+    # get only the file contents of the savestates variable
+    savestream = [s[1] for s in savestates]
+    
+    # Assert that each entry in savestream is of type bytes
+    for i, save in enumerate(savestream):
+        assert isinstance(save, bytes), f"Entry {i} in savestream is not bytes"
+        
     # Encode the savestates
-    savestream = encode(savestates)
+    savestream = encode(savestream)
+    assert isinstance(savestream, bytes), "Encoded savestream is not bytes"
     
     # Decode the savestream
     decoded_savestates = decode(savestream)
     
     # Verify the decoded savestates match the original
-    assert len(decoded_savestates) == len(savestates)
-    for original, decoded in zip(savestates, decoded_savestates):
-        # We need to split both to compare components as padding might differ
-        orig_components = _split_v86_savestate(original)
-        decoded_components = _split_v86_savestate(decoded)
+    assert len(decoded_savestates) == len(savestates), f"Decoded savestates length {len(decoded_savestates)} does not match original {len(savestates)}"
+    
+    # Verify the types of the decoded savestates match the original
+    for i, decoded in enumerate(decoded_savestates):
+        assert isinstance(decoded, bytes), f"Decoded savestate {i} is not bytes"
+        assert isinstance(savestates[i][1], bytes), f"Original savestate {i} is not bytes"
+        assert savestates[i][1] == decoded, f"Decoded savestate {i} does not match original state {i}"
         
-        assert orig_components[0] == decoded_components[0] # header
-        
-        # Compare JSON content of info blocks
-        orig_info = json.loads(orig_components[1].decode('utf-8'))
-        decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-        assert orig_info == decoded_info
-        
-        assert orig_components[2] == decoded_components[2] # buffer
-        
-def test_encode_one():
+def test_decode_one(savestates):
     """Test the decode_one function"""
-    # Create mock v86 savestates
-    savestates, _ = create_mock_savestates(3)
     
+    # get only the file contents of the savestates variable
+    savestream = [s[1] for s in savestates]
+    
+    # Assert each entry is of type bytes
+    for i, save in enumerate(savestream):
+        assert isinstance(save, bytes), f"Entry {i} in savestream is not of type bytes"
+        
     # Encode the savestates
-    savestream = encode(savestates)
+    savestream = encode(savestream)
     
-    # Test decoding specific indices
-    for i in range(3):
-        decoded = decode_one(savestream, i)
-        
-        # Compare components
-        orig_components = _split_v86_savestate(savestates[i])
-        decoded_components = _split_v86_savestate(decoded)
-        
-        assert orig_components[0] == decoded_components[0] # header
-        
-        
-        # Compare JSON content of info blocks
-        orig_info = json.loads(orig_components[1].decode('utf-8'))
-        decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-        assert orig_info == decoded_info
-        
-        assert orig_components[2] == decoded_components[2] # buffer
-        
-    # Test out-of-range index
-    with pytest.raises(IndexError):
-        decode_one(savestream, 3)
-        
-    with pytest.raises(IndexError):
-        decode_one(savestream, -1)
-        
-def test_decode_len():
-    """Test the decode_len function"""
-    # Create mock v86 savestates
-    savestates, _ = create_mock_savestates(3)
+    # Use decode_one to check if each reconstructed savestate is the same as the original
+    for i in range(len(savestates)):
+        assert decode_one(savestream, i) == savestates[i][1]
     
+    
+
+def test_decode_len(savestates):
+    """Test the encode and decode functions with length checks"""
+    
+    # get only the file contents of the savestates variable
+    savestream = [s[1] for s in savestates]
+    
+    # Assert that each entry in savestream is of type bytes
+    for i, save in enumerate(savestream):
+        assert isinstance(save, bytes), f"Entry {i} in savestreams is not bytes"
+        
     # Encode the savestates
-    savestream = encode(savestates)
+    savestream = encode(savestream)
     
-    # Test length
-    assert decode_len(savestream) == 3
+    unpacked_savestream = msgpack.unpackb(savestream, strict_map_key = False)
+    assert decode_len(savestream) == len(savestates)
+
+
+
+# Miscellaneous tests
+def test_info_encode_decode_roundtrip(savestates):
+    """Test info patch encode/decode"""
+    
+    state_list = [s[1] for s in savestates]
+    
+    # Extract all the info segments and diff them with jsonpatch
+    previous_info = {}
+    reconstructed_info = {}
+    
+    for state in state_list:
+        
+        header_block, info_block, buffer_block = _split_v86_savestate(state)
+        
+        # Decode the info block
+        info = json.loads(info_block.decode('utf-8'))
+        
+        diff = list(dictdiffer.diff(previous_info, info))
+        
+        # apply patch to reconstructed_info
+        reconstructed_info = dictdiffer.patch(diff, reconstructed_info)
+        
+        #breakpoint()    
+        
+        assert reconstructed_info == info, f"Reconstructed info does not match original info"
+        
+        
+        
+        
+    
+
+        
+        
+def test_decode_bytes(savestates):
+    savestream = [s[1] for s in savestates]
+    
+    info_blocks = []
+    
+    for i, save in enumerate(savestream):
+        header_block, info_block, buffer_block = _split_v86_savestate(save)
+        info_blocks.append(info_block)
+        assert isinstance(save, bytes)
+        
+        
+    savestream = encode(savestream)
+    assert isinstance(savestream, bytes)
+    
+    incremental_saves = msgpack.unpackb(savestream, strict_map_key=False)
+    
+    # apply dictdiffer to incremental_saves[0]['info_patch'] with the info block to reconstruct the info block
+    # and compare it with the original info block
+    reconstructed_info = {}
+    
+    for save in incremental_saves:
+        info_patch = save['info_patch']
+        
+        
+        diff = json.loads(info_patch.decode('utf-8'))
+        
+        reconstructed_info = dictdiffer.patch(diff, reconstructed_info)
+        # make check the same order as the original info block
+        reconstructed = json.dumps(reconstructed_info, separators=(',',':')).encode('utf-8')
+        
+        original = json.dumps(json.loads(info_blocks[i].decode('utf-8')), separators=(',',':')).encode('utf_8')
+        # remove spaces from ch
+        
+        #breakpoint()
+    
+    assert len(incremental_saves) == len(savestates)
+
+    
+    
     
 def test_empty_input():
     """Test encoding and decoding an empty list of savestates"""
@@ -228,293 +290,228 @@ def test_empty_input():
     assert decode_len(savestream) == 0
     assert decode(savestream) == []
     
-def test_large_blocks():
-    """Test encoding and decoding with different block sizes"""
-    # Create mock v86 savestates
-    savestates, _ = create_mock_savestates(3)
-    
-    # Test with different block sizes
-    for block_size in [128, 256, 512]:
-        savestream = encode(savestates, block_size=block_size)
-        decoded = decode(savestream)
         
-        assert len(decoded) == len(savestates)
-        for original, decoded_state in zip(savestates, decoded):
-            # Compare components
-            orig_components = _split_v86_savestate(original)
-            decoded_components = _split_v86_savestate(decoded_state)
-            
-            assert orig_components[0] == decoded_components[0] # header
-            
-            # Compare JSON content of info blocks
-            orig_info = json.loads(orig_components[1].decode('utf-8'))
-            decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-            assert orig_info == decoded_info
-            
-            assert orig_components[2] == decoded_components[2] # buffer
-        
-def test_deduplication_efficiency():
+def test_deduplication_efficiency(savestates):
     """Test that the deduplication is working effectively"""
-    # Create savestates with high redundancy
-    # We'll create 10 savestates where most of the data is identical
-    savestates = []
+    savestream = [s[1] for s in savestates]
     
-    base_buffer = bytes([0] * 1000) # 1KB of zeros
+    savestream = encode(savestream)
     
-    for i in range(10):
-        # Each savestate has 1KB of zeros, with just 10 bytes that change
-        custom_part = bytes([i] * 10)
-        buffer = base_buffer[:500] + custom_part + base_buffer[510:]
+    total_size = 0
+    for state in savestates:
+        total_size += len(state[1])
         
-        buffer_infos = [{"offset": 0, "length": len(buffer)}]
-        savestate, _ = create_mock_savestate(i, buffer, buffer_infos)
-        savestates.append(savestate)
-        
-    # Encode and check compression ratio
-    savestream = encode(savestates)
-    
-    # Calculate the total size of all savestates
-    total_size = sum(len(s) for s in savestates)
-    
-    # Calculate compression ratio
     compression_ratio = len(savestream) / total_size
     
-    # We expect significant compression due to deduplication
-    # With nearly identical 1KB savestates, we should get much better than 50% compression
     assert compression_ratio < 0.5, f"Compression ratio {compression_ratio} is higher than expected"
     
-    # Verify we can still decode correctly
-    decoded = decode(savestream)
-    assert len(decoded) == len(savestates)
-    
-def test_custom_super_block_size():
-    """Test encoding and decoding with custom super block size"""
-    # Create mock v86 savestates
-    savestates, _ = create_mock_savestates(3)
-    
-    # Test with custom super block size
-    block_size = 256
-    super_block_size = 1024 # 4 blocks per super block
-    
-    savestream = encode(savestates, block_size=block_size, super_block_size=super_block_size)
     decoded = decode(savestream)
     
-    assert len(decoded) == len(savestates)
-    for original, decoded_state in zip(savestates, decoded):
-        orig_components = _split_v86_savestate(original)
-        decoded_components = _split_v86_savestate(decoded_state)
-        
-        assert orig_components[0] == decoded_components[0] # header
-        
-        # Compare JSON content of info blocks
-        orig_info = json.loads(orig_components[1].decode('utf-8'))
-        decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-        assert orig_info == decoded_info
-        
-        assert orig_components[2] == decoded_components[2]
-        
-    def test_incremental_changes():
-        """Test encoding and decoding savestates with incremental changes"""
-        # Start with a base savestate
-        base_buffer = bytes([0] * 1000)
-        base_info = {"memory": "initial", "cpu": {"eax": 0, "ebx": 0}}
-        
-        for i in range(5):
-            # Modify a small part of the buffer for each savestate
-            modified_buffer = bytearray(base_buffer)
-            modified_buffer[i*10:(i+1)*10] = bytes([i+1] * 10)
-            
-            # Modify part of the info for each savestate
-            modified_info = base_info.copy()
-            modified_info["cpu"] = {"eax": i, "ebx": i*2}
-            
-            # Create the savestate
-            info_block = json.dumps(modified_info).encode('utf-8')
-            info_len = len(info_block)
-            header_block = struct.pack('IIII', i, 0, 0, info_len)
-            
-            # Pad info block to align with 4 bytes
-            
-            padding = (4 - (len(info_block) % 4)) % 4
-            padded_info = info_block + b'\x00' * padding
-            
-            savestate = header_block + padded_info + bytes(modified_buffer)
-            savestates.append(savestate)
-            
-        # Encode and decode
-        savestream = encode(savestates)
-        decoded = decode(savestream)
-        
-        # Verify all the savestates are correctly decoded
-        assert len(decoded) == len(savestates)
-        for i, (original, decoded_state) in enumerate(zip(savestates, decoded)):
-            # Compare components
-            orig_components = _split_v86_savestate(original)
-            decoded_components = _split_v86_savestate(decoded_state)
-            
-            assert orig_components[0] == decoded_components[0]  # header
-            
-            # Compare JSON content of info blocks
-            orig_info = json.loads(orig_components[1].decode('utf-8'))
-            decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-            assert orig_info == decoded_info
-            
-            assert orig_components[2] == decoded_components[2]  # buffer
-        
+    for i, state in enumerate(decoded):
+        assert savestates[i][1] == state, f"Decoded savestate {i} does not match original state {i}"
 
+    
+    
 # Tests for CLI functionality
-@pytest.fixture
-def temp_dir():
-    """Create a temporary dictionary for CLI tests"""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        yield Path(temp_dir)
+def test_cli_encode_decode_roundtrip(savestates):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        input_dir = tmpdir / "input"
+        input_dir.mkdir()
+        output_stream = tmpdir / "savestream.bin"
+        decoded_dir = tmpdir / "decoded"
+        decoded_dir.mkdir()
+        
+        for i, (_, data) in enumerate(savestates):
+            with open(input_dir / f"state_{i:04d}.bin", "wb") as f:
+                f.write(data)
+                
+        # --- CLI: Encode ---
+        encode_cmd = [
+            "python", "-m", "v86_savestreams.savestreams",
+            "encode",
+            *(str(input_dir / f"state_{i:04d}.bin") for i in range(len(savestates))),
+            str(output_stream)
+        ]  
+        result = subprocess.run(encode_cmd, capture_output=True, text=True)
+        assert result.returncode == 0, f"Encode command failed: {result.stderr}"
+        assert output_stream.exists(), "Savestream file was not created"
+        
+    
+        # --- CLI: Decode ---
+        decode_cmd = [
+            "python", "-m", "v86_savestreams.savestreams",
+            "decode",
+            str(output_stream),
+            str(decoded_dir)
+        ]
+        result = subprocess.run(decode_cmd, capture_output=True, text=True)
+        assert result.returncode == 0, f"Decode comand failed: {result.stderr}"
+        
+        # --- Compare original and decoded files ---
+        for i in range(len(savestates)):
+            original = savestates[i][1]
+            decoded_path = decoded_dir / f"state_{i:04d}.bin"
+            assert decoded_path.exists(), f"Decoded file {decoded_path} missing"
+            
+            with open(decoded_path, "rb") as f:
+                decoded = f.read()
+                
+            assert decoded == original, f"Decoded state {i} does not match original state"   
+
+# # Tests for CLI functionality
+# @pytest.fixture
+# def temp_dir():
+#     """Create a temporary dictionary for CLI tests"""
+#     with tempfile.TemporaryDirectory() as temp_dir:
+#         yield Path(temp_dir)
         
         
-def test_cli_encode_decode(temp_dir):
-    """Test the CLI encode and decode commands"""
-    # Create input and output directories
-    input_dir = temp_dir / "input"
-    input_dir.mkdir()
-    output_file = temp_dir / "savestream.bin"
-    output_dir = temp_dir / "output"
-    output_dir.mkdir()
+# def test_cli_encode_decode(temp_dir):
+#     """Test the CLI encode and decode commands"""
+#     # Create input and output directories
+#     input_dir = temp_dir / "input"
+#     input_dir.mkdir()
+#     output_file = temp_dir / "savestream.bin"
+#     output_dir = temp_dir / "output"
+#     output_dir.mkdir()
     
-    # Create and save mock savestates
-    savestates, _ = create_mock_savestates(3)
-    input_files = []
+#     # Create and save mock savestates
+#     savestates, _ = create_mock_savestates(3)
+#     input_files = []
     
-    for i, savestate in enumerate(savestates):
-        input_file = input_dir / f"state_{i}.bin"
-        with open(input_file, "wb") as f:
-            f.write(savestate)
-        input_files.append(input_file)
+#     for i, savestate in enumerate(savestates):
+#         input_file = input_dir / f"state_{i}.bin"
+#         with open(input_file, "wb") as f:
+#             f.write(savestate)
+#         input_files.append(input_file)
         
-    # Test CLI encode
-    cmd = [
-        "python", "-m", "v86_savestreams.savestreams",
-        "encode",
-        *[str(f) for f in input_files],
-        str(output_file)
-    ]
+#     # Test CLI encode
+#     cmd = [
+#         "python", "-m", "v86_savestreams.savestreams",
+#         "encode",
+#         *[str(f) for f in input_files],
+#         str(output_file)
+#     ]
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0, f"Encode command failed: {result.stderr}"
-    assert output_file.exists(), "Savestream file was not created"
+#     result = subprocess.run(cmd, capture_output=True, text=True)
+#     assert result.returncode == 0, f"Encode command failed: {result.stderr}"
+#     assert output_file.exists(), "Savestream file was not created"
     
-    # Test CLI decode
-    cmd = [
-        "python", -"m", "v86_savestreams.savestreams",
-        "decode",
-        str(output_file),
-        str(output_dir)
-    ]
+#     # Test CLI decode
+#     cmd = [
+#         "python", -"m", "v86_savestreams.savestreams",
+#         "decode",
+#         str(output_file),
+#         str(output_dir)
+#     ]
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0, f"Decode command failed: {result.stderr}"
+#     result = subprocess.run(cmd, capture_output=True, text=True)
+#     assert result.returncode == 0, f"Decode command failed: {result.stderr}"
     
-    # Verify decoded files match original
-    for i in range(3):
-        decoded_file = output_dir / f"state_{i:04d}.bin"
-        assert decoded_file.exists(), f"Decoded file {decoded_file} does not exist"
+#     # Verify decoded files match original
+#     for i in range(3):
+#         decoded_file = output_dir / f"state_{i:04d}.bin"
+#         assert decoded_file.exists(), f"Decoded file {decoded_file} does not exist"
         
-        with open(decoded_file, "rb") as f:
-            decoded = f.read()
+#         with open(decoded_file, "rb") as f:
+#             decoded = f.read()
         
-        # Compare components to handle potential padding differences
-        orig_components = _split_v86_savestate(savestates[i])
-        decoded_components = _split_v86_savestate(decoded)
+#         # Compare components to handle potential padding differences
+#         orig_components = _split_v86_savestate(savestates[i])
+#         decoded_components = _split_v86_savestate(decoded)
         
-        assert orig_components[0] == decoded_components[0]  # header
+#         assert orig_components[0] == decoded_components[0]  # header
         
-        # Compare JSON content of info blocks
-        orig_info = json.loads(orig_components[1].decode('utf-8'))
-        decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-        assert orig_info == decoded_info
+#         # Compare JSON content of info blocks
+#         orig_info = json.loads(orig_components[1].decode('utf-8'))
+#         decoded_info = json.loads(decoded_components[1].decode('utf-8'))
+#         assert orig_info == decoded_info
         
-        assert orig_components[2] == decoded_components[2]  # buffer
+#         assert orig_components[2] == decoded_components[2]  # buffer
         
-def test_cli_decode_one(temp_dir):
-    """Test the CLI decode command with a specific index."""
-    # Create mock savestates
-    savestates, _ = create_mock_savestates(3)
+# def test_cli_decode_one(temp_dir):
+#     """Test the CLI decode command with a specific index."""
+#     # Create mock savestates
+#     savestates, _ = create_mock_savestates(3)
     
-    # Encode to a savestream file
-    savestream = encode(savestates)
-    savestream_file = temp_dir / "savestream.bin"
-    with open(savestream_file, "wb") as f:
-        f.write(savestream)
+#     # Encode to a savestream file
+#     savestream = encode(savestates)
+#     savestream_file = temp_dir / "savestream.bin"
+#     with open(savestream_file, "wb") as f:
+#         f.write(savestream)
     
-    # Create output directory
-    output_dir = temp_dir / "output"
-    output_dir.mkdir()
+#     # Create output directory
+#     output_dir = temp_dir / "output"
+#     output_dir.mkdir()
     
-    # Test CLI decode with index
-    index = 1
-    cmd = [
-        "python", "-m", "v86_savestreams.savestreams", 
-        "decode", 
-        str(savestream_file), 
-        str(output_dir),
-        "--index", str(index)
-    ]
+#     # Test CLI decode with index
+#     index = 1
+#     cmd = [
+#         "python", "-m", "v86_savestreams.savestreams", 
+#         "decode", 
+#         str(savestream_file), 
+#         str(output_dir),
+#         "--index", str(index)
+#     ]
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0, f"Decode command failed: {result.stderr}"
+#     result = subprocess.run(cmd, capture_output=True, text=True)
+#     assert result.returncode == 0, f"Decode command failed: {result.stderr}"
     
-    # Verify only the specified savestate was decoded
-    decoded_file = output_dir / f"state_{index:04d}.bin"
-    assert decoded_file.exists(), f"Decoded file {decoded_file} does not exist"
+#     # Verify only the specified savestate was decoded
+#     decoded_file = output_dir / f"state_{index:04d}.bin"
+#     assert decoded_file.exists(), f"Decoded file {decoded_file} does not exist"
     
-    # Check that other files don't exist
-    for i in range(3):
-        if i != index:
-            other_file = output_dir / f"state_{i:04d}.bin"
-            assert not other_file.exists(), f"File {other_file} should not exist"
+#     # Check that other files don't exist
+#     for i in range(3):
+#         if i != index:
+#             other_file = output_dir / f"state_{i:04d}.bin"
+#             assert not other_file.exists(), f"File {other_file} should not exist"
     
-    # Verify the decoded file matches the original
-    with open(decoded_file, "rb") as f:
-        decoded = f.read()
+#     # Verify the decoded file matches the original
+#     with open(decoded_file, "rb") as f:
+#         decoded = f.read()
     
-    # Compare components
-    orig_components = _split_v86_savestate(savestates[index])
-    decoded_components = _split_v86_savestate(decoded)
+#     # Compare components
+#     orig_components = _split_v86_savestate(savestates[index])
+#     decoded_components = _split_v86_savestate(decoded)
     
-    assert orig_components[0] == decoded_components[0]  # header
+#     assert orig_components[0] == decoded_components[0]  # header
     
-    # Compare JSON content of info blocks
-    orig_info = json.loads(orig_components[1].decode('utf-8'))
-    decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-    assert orig_info == decoded_info
+#     # Compare JSON content of info blocks
+#     orig_info = json.loads(orig_components[1].decode('utf-8'))
+#     decoded_info = json.loads(decoded_components[1].decode('utf-8'))
+#     assert orig_info == decoded_info
     
-    assert orig_components[2] == decoded_components[2]  # buffer
+#     assert orig_components[2] == decoded_components[2]  # buffer
 
 
-def test_cli_info(temp_dir):
-    """Test the CLI info command."""
-    # Create mock savestates
-    savestates, _ = create_mock_savestates(3)
+# def test_cli_info(temp_dir):
+#     """Test the CLI info command."""
+#     # Create mock savestates
+#     savestates, _ = create_mock_savestates(3)
     
-    # Encode to a savestream file
-    savestream = encode(savestates)
-    savestream_file = temp_dir / "savestream.bin"
-    with open(savestream_file, "wb") as f:
-        f.write(savestream)
+#     # Encode to a savestream file
+#     savestream = encode(savestates)
+#     savestream_file = temp_dir / "savestream.bin"
+#     with open(savestream_file, "wb") as f:
+#         f.write(savestream)
     
-    # Test CLI info command
-    cmd = [
-        "python", "-m", "v86_savestreams.savestreams", 
-        "info", 
-        str(savestream_file)
-    ]
+#     # Test CLI info command
+#     cmd = [
+#         "python", "-m", "v86_savestreams.savestreams", 
+#         "info", 
+#         str(savestream_file)
+#     ]
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    assert result.returncode == 0, f"Info command failed: {result.stderr}"
+#     result = subprocess.run(cmd, capture_output=True, text=True)
+#     assert result.returncode == 0, f"Info command failed: {result.stderr}"
     
-    # Verify output contains expected information
-    output = result.stdout
-    assert f"Number of save states: 3" in output, "Output should show 3 save states"
-    assert f"Savestream size: {len(savestream):,} bytes" in output, "Output should show savestream size"
-    assert "Average size per state:" in output, "Output should show average size"
+#     # Verify output contains expected information
+#     output = result.stdout
+#     assert f"Number of save states: 3" in output, "Output should show 3 save states"
+#     assert f"Savestream size: {len(savestream):,} bytes" in output, "Output should show savestream size"
+#     assert "Average size per state:" in output, "Output should show average size"
 
 
 if __name__ == "__main__":

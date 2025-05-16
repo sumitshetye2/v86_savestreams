@@ -16,7 +16,7 @@ authors = [
 dependencies = [
     "numpy>=1.18.0",
     "msgpack>=1.0.0",
-    "jsonpatch>=1.32",
+    "dictdiffer",
 ]
 
 [project.optional-dependencies]
@@ -36,3 +36,4 @@ packages = ["v86_savestreams"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
