@@ -28,11 +28,11 @@ savestreams info some.savestream
 ```
 
 ```sh
-savestreams decode some.savestream 2 > state2.bin
+savestreams decode some.savestream outputs --index 2
 ```
 
 ```sh
-savestreams trim some.savestream 50 250 > trimmed.savestream
+savestreams trim some.savestream trimmed.savestream 50 250 
 ```
 
 

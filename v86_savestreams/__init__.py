@@ -214,7 +214,7 @@ def encode(v86state_array: Sequence[bytes]) -> bytes:
     return msgpack.packb(incremental_saves)
 
 
-def decode(savestream_bytes: bytes) -> List[bytes]:
+def decode(savestream_bytes: bytes) -> Sequence[bytes]:
     """
     Decode a savestream back into a sequence of v86 save states.
 
@@ -222,7 +222,7 @@ def decode(savestream_bytes: bytes) -> List[bytes]:
         savestream_bytes (bytes): The compressed savestream
 
     Returns:
-        List[bytes]: A list of decompressed v86 savestates
+        Sequence[bytes]: A sequence of decompressed v86 savestates
     """
     
     
@@ -237,9 +237,6 @@ def decode(savestream_bytes: bytes) -> List[bytes]:
     
     # --- Start with an empty "previous info" to build patches on top of ---
     prev_info = {}
-    
-    # --- Prepare an output list to store the reconstructed savestates ---
-    reconstructed_states = []
     
     # --- Iterate through each save entry in the unpacked list ---
     for i, save in enumerate(unpacked_saves):
@@ -281,11 +278,34 @@ def decode(savestream_bytes: bytes) -> List[bytes]:
         # --- Stitch together the full savestate ---
         full_savestate = _recombine_v86_savestate((header_block, info_block, buffer_block))
         
-        reconstructed_states.append(full_savestate)
-      
-    # --- return the list of reconstructed savestates ---  
-    return reconstructed_states
+        yield full_savestate
+
+def trim(savestream_bytes: bytes, start_index: int, end_index: int) -> bytes:
+    """
+    Trim a savestream to only include the specified range of save states.
+
+    Args:
+        savestream_bytes (bytes): The compressed savestream
+        start_index (int): The starting index of the range to keep
+        end_index (int): The ending index of the range to keep
+
+    Returns:
+        bytes: A new savestream containing only the specified range of save states
+    """
     
+    num_states = decode_len(savestream_bytes)
+    if end_index < 0:
+        end_index = num_states + end_index
+
+    def generate_trimmed_states():
+        for i, state in enumerate(decode(savestream_bytes)):
+            if start_index <= i and i <= end_index:
+                yield state
+            if i >= end_index:
+                break
+
+    return encode(generate_trimmed_states())
+
 def decode_one(savestream_bytes: bytes, index: int) -> bytes:
     """
     Decode a single save state from a savestream at the specified index.
@@ -300,14 +320,11 @@ def decode_one(savestream_bytes: bytes, index: int) -> bytes:
     Raises:
         IndexError: If the index is out of range
     """
-    len_check = len(msgpack.unpackb(savestream_bytes, strict_map_key=False))
-    
-    if index < 0 or index >= len_check:
-        raise IndexError(f"Index {index} out of range for savestream with {len_check} states")
-    
-    decoded_saves = decode(savestream_bytes)
-    
-    return decoded_saves[index]
+    # iterate using the generator until we have the one that was requested
+    for i, state in enumerate(decode(savestream_bytes)):
+        if i == index:
+            return state
+    raise IndexError(f"Index {index} out of range for savestream with {decode_len(savestream_bytes)} saves")
     
     
     
@@ -338,17 +355,24 @@ def main():
     encode_parser = subparsers.add_parser("encode", help="Encode v86 savestates into a savestream")
     encode_parser.add_argument("input_files", nargs="+", help="File names of V86 save states")
     encode_parser.add_argument("output_file", help="Output savestream file path")
-    #Decode command
+    
+    # Decode command
     decode_parser = subparsers.add_parser("decode", help="Decode a savestream file into v86 save states")
     decode_parser.add_argument("input_file", help="Path to savestream file")
     decode_parser.add_argument("output_dir", help="Directory to save decoded states")
     decode_parser.add_argument("--index", type=int, default=None, help="(Optional) Decode only the specified index ")
-    
         
     # Info command
     info_parser = subparsers.add_parser("info", help="Get information about a savestream")
     info_parser.add_argument("input_file", help="Input savestream file")
-    
+
+    # Trim command
+    trim_parser = subparsers.add_parser("trim", help="Trim a savestream to a specific range")
+    trim_parser.add_argument("input_file", help="Input savestream file")
+    trim_parser.add_argument("output_file", help="Output trimmed savestream file")
+    trim_parser.add_argument("start_index", type=int, nargs='?', default=0, help="Start index of the range to keep (default: 0)")
+    trim_parser.add_argument("end_index", type=int, nargs='?', default=-1, help="End index of the range to keep (default: -1, meaning up to the end)")
+
     args = parser.parse_args()
     
     if args.command == "encode":
@@ -387,12 +411,11 @@ def main():
                 
         else:
             # Decode all save states
-            v86states = decode(savestream)
-            for i, v86state in enumerate(v86states):
+            for i, v86state in enumerate(decode(savestream)):
                 output_file = os.path.join(args.output_dir, f"state_{i:04d}.bin")
                 with open(output_file, "wb") as f:
                     f.write(v86state)
-            print(f"Decoded {len(v86states)} to {output_file}")
+            print(f"Decoded {i+1} states to {args.output_dir}")
             
         
                 
@@ -407,7 +430,18 @@ def main():
         print(f"Savestream size: {len(savestream):,} bytes")
         if num_states > 0:
             print(f"Average save state size: {len(savestream) / num_states:,.2f} bytes")  
+    
+    elif args.command == "trim":
+        with open(args.input_file, "rb") as f:
+            savestream = f.read()
+        
+        trimmed_savestream = trim(savestream, args.start_index, args.end_index)
+        
+        with open(args.output_file, "wb") as f:
+            f.write(trimmed_savestream)
             
+        print(f"Trimmed savestream saved to {args.output_file}")
+
     else:
         parser.print_help()
         sys.exit(1)  
