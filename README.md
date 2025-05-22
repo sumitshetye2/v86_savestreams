@@ -24,7 +24,7 @@ savestreams encode state0.bin state1.bin state2.bin > some.savestream
 ```
 
 ```sh
-savestreams length some.savestream # 3
+savestreams info some.savestream
 ```
 
 ```sh
@@ -34,10 +34,14 @@ savestreams decode some.savestream 2 > state2.bin
 ```sh
 savestreams trim some.savestream 50 250 > trimmed.savestream
 ```
-## Unpack example data
+
+
+## Use example data provided with this repository
 
 ```sh
-python -c "import zipfile; zipfile.ZipFile('your_file.zip', 'r').extractall('destination_folder')"
+python -c "import zipfile; zipfile.ZipFile('tests/msdos-states.zip', 'r').extractall('examples')"
+savestreams encode "examples/msdos-v86state (1).bin" "examples/msdos-v86state (2).bin" "examples/msdos-v86state (3).bin" examples/msdos.savestream
+savestreams info examples/msdos.savestream
 ```
 
 ## Testing
