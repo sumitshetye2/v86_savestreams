@@ -34,7 +34,11 @@ savestreams decode some.savestream 2 > state2.bin
 ```sh
 savestreams trim some.savestream 50 250 > trimmed.savestream
 ```
+## Unpack example data
 
+```sh
+python -c "import zipfile; zipfile.ZipFile('your_file.zip', 'r').extractall('destination_folder')"
+```
 
 ## Testing
 

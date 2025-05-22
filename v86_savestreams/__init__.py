@@ -127,7 +127,8 @@ def _make_unaligned_buffer_block(info_block: bytes, aligned_buffer_block: bytes,
     return b''.join(unaligned_blocks)
 
 
-def encode(v86state_array: Sequence[bytes], block_size: int = 256, super_block_size: int = None) -> bytes:
+#def encode(v86state_array: Sequence[bytes], block_size: int = 256, super_block_size: int = None) -> bytes:
+def encode(v86state_array: Sequence[bytes]) -> bytes:
     """
     Encode a sequence of v86 save states into a single compressed savestream.
 
@@ -139,7 +140,7 @@ def encode(v86state_array: Sequence[bytes], block_size: int = 256, super_block_s
     Returns:
         bytes: Compressed savestream as bytes
     """
-    
+    block_size = 256
     super_block_size = 256 * block_size
     
         
@@ -374,7 +375,7 @@ def main():
     
     # Encode command
     encode_parser = subparsers.add_parser("encode", help="Encode v86 savestates into a savestream")
-    encode_parser.add_argument("input_dir", nargs="+", help="Path to directory of V86 save states")
+    encode_parser.add_argument("input_files", nargs="+", help="File names of V86 save states")
     encode_parser.add_argument("output_file", help="Output savestream file path")
     # encode_parser.add_argument("--block_size", type=int, default=256, help="Block size for deduplication. Defaults to 256 bytes")
     # encode_parser.add_argument("--super_block_size", type=int, help="Super Block Size. Default is 256 * block_size")
@@ -400,7 +401,7 @@ def main():
         
         from . import encode
                 
-        savestream = encode(v86states, block_size=args.block_size, super_block_size=args.super_block_size)
+        savestream = encode(v86states)
         
         with open(args.output_file, "wb") as f:
             f.write(savestream)
