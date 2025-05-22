@@ -14,7 +14,6 @@ import numpy as np
 import msgpack
 from dictdiffer import diff, patch
 import io
-#from tqdm import tqdm
 
 def _pad_to(x: bytes, multiple: int) -> bytes:
     """
@@ -127,7 +126,6 @@ def _make_unaligned_buffer_block(info_block: bytes, aligned_buffer_block: bytes,
     return b''.join(unaligned_blocks)
 
 
-#def encode(v86state_array: Sequence[bytes], block_size: int = 256, super_block_size: int = None) -> bytes:
 def encode(v86state_array: Sequence[bytes]) -> bytes:
     """
     Encode a sequence of v86 save states into a single compressed savestream.
@@ -232,29 +230,6 @@ def decode(savestream_bytes: bytes) -> List[bytes]:
     
     block_size = 256
     super_block_size = 256 * block_size
-    
-    # Determine block size from the first non-empty block
-    # block_size = None
-    # for frame in incremental_saves:
-    #     if frame['new_blocks']:
-    #         # Get the first block
-    #         first_block_id = next(iter(frame['new_blocks']))
-    #         block_size = len(frame['new_blocks'][first_block_id])
-    #         break
-        
-    # if block_size is None:
-    #     block_size = 256 # Default block size
-        
-    # # Determine the super block size from the first super block
-    # super_block_size = None
-    # for frame in incremental_saves:
-    #     if frame['new_super_blocks']:
-    #         # Get the first super block
-    #         first_sb_id = next(iter(frame['new_super_blocks']))
-    #         super_block_size = len(frame['new_super_blocks'][first_sb_id]) * block_size
-    #         break
-    # if super_block_size is None:
-    #     super_block_size = block_size * 256
         
     # --- Initialize known block/super block stores with a zero block ---
     known_blocks = {0: b'\x00' * block_size}
@@ -293,16 +268,6 @@ def decode(savestream_bytes: bytes) -> List[bytes]:
         prev_info = current_info
         info_block = json.dumps(current_info, separators=(',',':')).encode('utf-8')
         
-        
-        
-        # Reconstruct the aligned buffer from the super block sequence
-        # aligned_blocks = []
-        # for sid in super_sequence:
-        #     block_ids = known_super_blocks[sid]
-        #     for bid in block_ids:
-        #         aligned_blocks.append(known_blocks[bid])
-        # aligned_buffer = b''.join(aligned_blocks)
-        
         # --- Reconstruct the full aligned buffer from the superblcock sequence ---
         buffer = bytearray()
         for sb_id in super_sequence:
@@ -320,10 +285,6 @@ def decode(savestream_bytes: bytes) -> List[bytes]:
       
     # --- return the list of reconstructed savestates ---  
     return reconstructed_states
-    
-        
-        
-    
     
 def decode_one(savestream_bytes: bytes, index: int) -> bytes:
     """
@@ -377,9 +338,6 @@ def main():
     encode_parser = subparsers.add_parser("encode", help="Encode v86 savestates into a savestream")
     encode_parser.add_argument("input_files", nargs="+", help="File names of V86 save states")
     encode_parser.add_argument("output_file", help="Output savestream file path")
-    # encode_parser.add_argument("--block_size", type=int, default=256, help="Block size for deduplication. Defaults to 256 bytes")
-    # encode_parser.add_argument("--super_block_size", type=int, help="Super Block Size. Default is 256 * block_size")
-    
     #Decode command
     decode_parser = subparsers.add_parser("decode", help="Decode a savestream file into v86 save states")
     decode_parser.add_argument("input_file", help="Path to savestream file")
