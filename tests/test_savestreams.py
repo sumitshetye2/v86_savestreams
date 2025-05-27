@@ -288,9 +288,8 @@ def test_trim_savestates_roundtrip(savestates):
     trimmed_savestream = trim(full_savestream, 1, 2)
     decoded = list(decode(trimmed_savestream))
     
-    assert len(decoded) == 2
+    assert len(decoded) == 1
     assert decoded[0] == state_list[1]
-    assert decoded[1] == state_list[2 ]
     
     
 def test_empty_input():
@@ -398,9 +397,8 @@ def test_cli_trim(savestates):
             trimmed_savestream = f.read()
             
         decoded = list(decode(trimmed_savestream))
-        assert len(decoded) == 2
+        assert len(decoded) == 1
         assert decoded[0] == state_list[1]
-        assert decoded[1] == state_list[2]
         
         
         # Run the CLI trim command to keep states 1 onwards

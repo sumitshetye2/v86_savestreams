@@ -299,11 +299,16 @@ def trim(savestream_bytes: bytes, start_index: int, end_index: int | None = None
     if start_index < 0:
         raise ValueError("Invalid start or end index")
     
+    if end_index is None:
+        end_index = decode_len(savestream_bytes)
+    elif end_index < 0:
+        end_index = decode_len(savestream_bytes) - 1
+    
     trimmed = []
     for i, state in enumerate(decode(savestream_bytes)):
         if i < start_index:
             continue
-        if end_index is not None and i > end_index:
+        if i >= end_index:
             break
         trimmed.append(state)
             
