@@ -337,7 +337,7 @@ def test_cli_encode_decode_roundtrip(savestates):
                 
         # --- CLI: Encode ---
         encode_cmd = [
-            "python", "-m", "v86_savestreams.savestreams",
+            sys.executable, "-m", "v86_savestreams.__init__",
             "encode",
             *(str(input_dir / f"state_{i:04d}.bin") for i in range(len(savestates))),
             str(output_stream)
@@ -349,7 +349,7 @@ def test_cli_encode_decode_roundtrip(savestates):
     
         # --- CLI: Decode ---
         decode_cmd = [
-            "python", "-m", "v86_savestreams.savestreams",
+            sys.executable, "-m", "v86_savestreams.__init__",
             "decode",
             str(output_stream),
             str(decoded_dir)
@@ -368,160 +368,64 @@ def test_cli_encode_decode_roundtrip(savestates):
                 
             assert decoded == original, f"Decoded state {i} does not match original state"   
 
-# # Tests for CLI functionality
-# @pytest.fixture
-# def temp_dir():
-#     """Create a temporary dictionary for CLI tests"""
-#     with tempfile.TemporaryDirectory() as temp_dir:
-#         yield Path(temp_dir)
+def test_cli_trim(savestates):
+    state_list = [s[1] for s in savestates]
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        input_stream_path = tmpdir / "full.savestream"
+        output_stream_path = tmpdir / "trimmed.savestream"
+        
+        with open(input_stream_path, "wb") as f:
+            f.write(encode(state_list))
+            
+        # Run the CLI trim command to keep states 1 and 2
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "v86_savestreams.__init__",
+                "trim",
+                str(input_stream_path),
+                str(output_stream_path),
+                "1", "2"
+            ],
+            capture_output=True, text=True
+        )
+        
+        assert result.returncode == 0, f"Trim command failed: {result.stderr}"
+        assert output_stream_path.exists(), "Trimmed savestream file was not created"
+        
+        with open(output_stream_path, "rb") as f:
+            trimmed_savestream = f.read()
+            
+        decoded = list(decode(trimmed_savestream))
+        assert len(decoded) == 2
+        assert decoded[0] == state_list[1]
+        assert decoded[1] == state_list[2]
         
         
-# def test_cli_encode_decode(temp_dir):
-#     """Test the CLI encode and decode commands"""
-#     # Create input and output directories
-#     input_dir = temp_dir / "input"
-#     input_dir.mkdir()
-#     output_file = temp_dir / "savestream.bin"
-#     output_dir = temp_dir / "output"
-#     output_dir.mkdir()
-    
-#     # Create and save mock savestates
-#     savestates, _ = create_mock_savestates(3)
-#     input_files = []
-    
-#     for i, savestate in enumerate(savestates):
-#         input_file = input_dir / f"state_{i}.bin"
-#         with open(input_file, "wb") as f:
-#             f.write(savestate)
-#         input_files.append(input_file)
+        # Run the CLI trim command to keep states 1 onwards
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "v86_savestreams.__init__",
+                "trim",
+                str(input_stream_path),
+                str(output_stream_path),
+                "1"
+            ],
+            capture_output=True, text=True
+        )
         
-#     # Test CLI encode
-#     cmd = [
-#         "python", "-m", "v86_savestreams.savestreams",
-#         "encode",
-#         *[str(f) for f in input_files],
-#         str(output_file)
-#     ]
-    
-#     result = subprocess.run(cmd, capture_output=True, text=True)
-#     assert result.returncode == 0, f"Encode command failed: {result.stderr}"
-#     assert output_file.exists(), "Savestream file was not created"
-    
-#     # Test CLI decode
-#     cmd = [
-#         "python", -"m", "v86_savestreams.savestreams",
-#         "decode",
-#         str(output_file),
-#         str(output_dir)
-#     ]
-    
-#     result = subprocess.run(cmd, capture_output=True, text=True)
-#     assert result.returncode == 0, f"Decode command failed: {result.stderr}"
-    
-#     # Verify decoded files match original
-#     for i in range(3):
-#         decoded_file = output_dir / f"state_{i:04d}.bin"
-#         assert decoded_file.exists(), f"Decoded file {decoded_file} does not exist"
+        assert result.returncode == 0, f"Trim command failed: {result.stderr}"
+        assert output_stream_path.exists(), "Trimmed savestream file was not created"
         
-#         with open(decoded_file, "rb") as f:
-#             decoded = f.read()
-        
-#         # Compare components to handle potential padding differences
-#         orig_components = _split_v86_savestate(savestates[i])
-#         decoded_components = _split_v86_savestate(decoded)
-        
-#         assert orig_components[0] == decoded_components[0]  # header
-        
-#         # Compare JSON content of info blocks
-#         orig_info = json.loads(orig_components[1].decode('utf-8'))
-#         decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-#         assert orig_info == decoded_info
-        
-#         assert orig_components[2] == decoded_components[2]  # buffer
-        
-# def test_cli_decode_one(temp_dir):
-#     """Test the CLI decode command with a specific index."""
-#     # Create mock savestates
-#     savestates, _ = create_mock_savestates(3)
+        with open(output_stream_path, "rb") as f:
+            trimmed_savestream = f.read()
+            
+        decoded = list(decode(trimmed_savestream))
+        assert len(decoded) == 2
+        assert decoded[0] == state_list[1]
+        assert decoded[1] == state_list[2]
     
-#     # Encode to a savestream file
-#     savestream = encode(savestates)
-#     savestream_file = temp_dir / "savestream.bin"
-#     with open(savestream_file, "wb") as f:
-#         f.write(savestream)
-    
-#     # Create output directory
-#     output_dir = temp_dir / "output"
-#     output_dir.mkdir()
-    
-#     # Test CLI decode with index
-#     index = 1
-#     cmd = [
-#         "python", "-m", "v86_savestreams.savestreams", 
-#         "decode", 
-#         str(savestream_file), 
-#         str(output_dir),
-#         "--index", str(index)
-#     ]
-    
-#     result = subprocess.run(cmd, capture_output=True, text=True)
-#     assert result.returncode == 0, f"Decode command failed: {result.stderr}"
-    
-#     # Verify only the specified savestate was decoded
-#     decoded_file = output_dir / f"state_{index:04d}.bin"
-#     assert decoded_file.exists(), f"Decoded file {decoded_file} does not exist"
-    
-#     # Check that other files don't exist
-#     for i in range(3):
-#         if i != index:
-#             other_file = output_dir / f"state_{i:04d}.bin"
-#             assert not other_file.exists(), f"File {other_file} should not exist"
-    
-#     # Verify the decoded file matches the original
-#     with open(decoded_file, "rb") as f:
-#         decoded = f.read()
-    
-#     # Compare components
-#     orig_components = _split_v86_savestate(savestates[index])
-#     decoded_components = _split_v86_savestate(decoded)
-    
-#     assert orig_components[0] == decoded_components[0]  # header
-    
-#     # Compare JSON content of info blocks
-#     orig_info = json.loads(orig_components[1].decode('utf-8'))
-#     decoded_info = json.loads(decoded_components[1].decode('utf-8'))
-#     assert orig_info == decoded_info
-    
-#     assert orig_components[2] == decoded_components[2]  # buffer
-
-
-# def test_cli_info(temp_dir):
-#     """Test the CLI info command."""
-#     # Create mock savestates
-#     savestates, _ = create_mock_savestates(3)
-    
-#     # Encode to a savestream file
-#     savestream = encode(savestates)
-#     savestream_file = temp_dir / "savestream.bin"
-#     with open(savestream_file, "wb") as f:
-#         f.write(savestream)
-    
-#     # Test CLI info command
-#     cmd = [
-#         "python", "-m", "v86_savestreams.savestreams", 
-#         "info", 
-#         str(savestream_file)
-#     ]
-    
-#     result = subprocess.run(cmd, capture_output=True, text=True)
-#     assert result.returncode == 0, f"Info command failed: {result.stderr}"
-    
-#     # Verify output contains expected information
-#     output = result.stdout
-#     assert f"Number of save states: 3" in output, "Output should show 3 save states"
-#     assert f"Savestream size: {len(savestream):,} bytes" in output, "Output should show savestream size"
-#     assert "Average size per state:" in output, "Output should show average size"
-
 
 if __name__ == "__main__":
     pytest.main(["-xvs", __file__])

@@ -15,6 +15,10 @@ import msgpack
 from dictdiffer import diff, patch
 import io
 
+import argparse
+import sys
+import os
+
 def _pad_to(x: bytes, multiple: int) -> bytes:
     """
     Pad a buffer to a specific length with null bytes
@@ -348,9 +352,7 @@ def decode_len(savestream_bytes: bytes) -> int:
 
 
 def main():
-    import argparse
-    import sys
-    import os
+
     
     parser = argparse.ArgumentParser(description="v86 Savestream Utility")
     subparsers = parser.add_subparsers(dest="command", help="Commmand to execute")
