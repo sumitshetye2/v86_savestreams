@@ -15,7 +15,7 @@ authors = [
 
 dependencies = [
     "numpy>=1.18.0",
-    "msgpack>=1.0.0",
+    "msgpack>=1.1.0",
     "dictdiffer",
 ]
 

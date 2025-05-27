@@ -25,7 +25,7 @@ import pytest
 
 from v86_savestreams import (
     # Public API
-    encode, decode, decode_one, decode_len,
+    encode, decode, decode_one, decode_len, trim,
     
     #Private API
     _pad_to, _split_v86_savestate, _recombine_v86_savestate,
@@ -166,7 +166,7 @@ def test_encode_decode_roundtrip(savestates):
     decoded_savestates = decode(savestream)
     
     # Verify the decoded savestates match the original
-    assert len(decoded_savestates) == len(savestates), f"Decoded savestates length {len(decoded_savestates)} does not match original {len(savestates)}"
+    assert len(list(decoded_savestates)) == len(savestates), f"Decoded savestates length {len(decoded_savestates)} does not match original {len(savestates)}"
     
     # Verify the types of the decoded savestates match the original
     for i, decoded in enumerate(decoded_savestates):
@@ -280,15 +280,24 @@ def test_decode_bytes(savestates):
         #breakpoint()
     
     assert len(incremental_saves) == len(savestates)
-
     
+def test_trim_savestates_roundtrip(savestates):
+    state_list = [s[1] for s in savestates]
+    
+    full_savestream = encode(state_list)
+    trimmed_savestream = trim(full_savestream, 1, 2)
+    decoded = list(decode(trimmed_savestream))
+    
+    assert len(decoded) == 2
+    assert decoded[0] == state_list[1]
+    assert decoded[1] == state_list[2 ]
     
     
 def test_empty_input():
     """Test encoding and decoding an empty list of savestates"""
     savestream = encode([])
     assert decode_len(savestream) == 0
-    assert decode(savestream) == []
+    assert list(decode(savestream)) == []
     
         
 def test_deduplication_efficiency(savestates):

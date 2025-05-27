@@ -366,7 +366,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "dictdiffer" },
-    { name = "msgpack", specifier = ">=1.0.0" },
+    { name = "msgpack", specifier = ">=1.1.0" },
     { name = "numpy", specifier = ">=1.18.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
 ]

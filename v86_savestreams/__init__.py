@@ -280,7 +280,7 @@ def decode(savestream_bytes: bytes) -> Sequence[bytes]:
         
         yield full_savestate
 
-def trim(savestream_bytes: bytes, start_index: int, end_index: int) -> bytes:
+def trim(savestream_bytes: bytes, start_index: int, end_index: int | None = None) -> bytes:
     """
     Trim a savestream to only include the specified range of save states.
 
@@ -292,19 +292,23 @@ def trim(savestream_bytes: bytes, start_index: int, end_index: int) -> bytes:
     Returns:
         bytes: A new savestream containing only the specified range of save states
     """
+    if start_index < 0:
+        raise ValueError("Invalid start or end index")
     
-    num_states = decode_len(savestream_bytes)
-    if end_index < 0:
-        end_index = num_states + end_index
+    trimmed = []
+    for i, state in enumerate(decode(savestream_bytes)):
+        if i < start_index:
+            continue
+        if end_index is not None and i > end_index:
+            break
+        trimmed.append(state)
+            
+    if not trimmed:
+        raise  ValueError("No states in the specified range")
+    
+    return encode(trimmed)
+    
 
-    def generate_trimmed_states():
-        for i, state in enumerate(decode(savestream_bytes)):
-            if start_index <= i and i <= end_index:
-                yield state
-            if i >= end_index:
-                break
-
-    return encode(generate_trimmed_states())
 
 def decode_one(savestream_bytes: bytes, index: int) -> bytes:
     """
@@ -370,8 +374,8 @@ def main():
     trim_parser = subparsers.add_parser("trim", help="Trim a savestream to a specific range")
     trim_parser.add_argument("input_file", help="Input savestream file")
     trim_parser.add_argument("output_file", help="Output trimmed savestream file")
-    trim_parser.add_argument("start_index", type=int, nargs='?', default=0, help="Start index of the range to keep (default: 0)")
-    trim_parser.add_argument("end_index", type=int, nargs='?', default=-1, help="End index of the range to keep (default: -1, meaning up to the end)")
+    trim_parser.add_argument("start_index", type=int, default=0, help="Start index of the range to keep (default: 0)")
+    trim_parser.add_argument("end_index", type=int, nargs='?', default=None, help="End index of the range to keep (default: -1, meaning up to the end)")
 
     args = parser.parse_args()
     
@@ -432,6 +436,7 @@ def main():
             print(f"Average save state size: {len(savestream) / num_states:,.2f} bytes")  
     
     elif args.command == "trim":
+        from . import trim
         with open(args.input_file, "rb") as f:
             savestream = f.read()
         
@@ -440,7 +445,10 @@ def main():
         with open(args.output_file, "wb") as f:
             f.write(trimmed_savestream)
             
-        print(f"Trimmed savestream saved to {args.output_file}")
+        if args.end_index is None:
+            print(f"Trimmed savestream saved to {args.output_file} from index {args.start_index} to the end")
+        else:
+            print(f"Trimmed savestream saved to {args.output_file} from index {args.start_index} to {args.end_index}")
 
     else:
         parser.print_help()
