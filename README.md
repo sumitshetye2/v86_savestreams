@@ -32,7 +32,7 @@ savestreams decode some.savestream outputs --index 2
 ```
 
 ```sh
-savestreams trim some.savestream trimmed.savestream 50 250 
+savestreams trim some.savestream trimmed.savestream 50 250 # indexes work like in python slices, e.g. arr[50:250] 
 ```
 
 
