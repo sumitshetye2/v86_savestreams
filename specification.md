@@ -1,219 +1,173 @@
-TODO: add a specificaton of the savestream format to this file
 # Format Specification: v86 Savestreams
 
 ## Overview
-This format specification docuent defines a method to efficiently compress and decompress v86 virtual machine save states into a single compact file (called a savestream). It enables storing multiple VM save states while minimizing redundant data through block-based deduplication and structural diffs.
+This document defines the v86 savestream format and its Python reference implementation. The format efficiently compresses and decompresses v86 virtual machine save states into a single compact file (a savestream), minimizing redundant data via block-based deduplication and structural diffs.
 
 ## Core Concepts
 1. **Save State Structure**
-   A single v86 save state is composed of:
-   - header_block: First 16 bytes, includes a 32-bit little-endian field giving the length of the info block
-   - info_block: JSON-encoded metadata (parsed as UTF-8), beggining at byte 16.
-   - buffer_block: Packed memory
+   - A v86 save state consists of:
+     - `header_block`: First 16 bytes, includes a 32-bit little-endian field giving the length of the info block
+     - `info_block`: JSON-encoded metadata (UTF-8), beginning at byte 16
+     - `buffer_block`: Packed memory
 2. **Savestream Format**
-   A savestream is a MessagePack-encoded stream that stores:
-   - An uncompressed header segment
-   - A patch of the info segment
-   - A compressed representation of the buffer segment
-     - A sequence of superblock indexes
-     - New blocks encountered
-     - New suberblocks encountered
-  
+   - A savestream is a MessagePack-encoded list of frames, each storing:
+     - An uncompressed header segment
+     - A JSON diff patch of the info segment (using `dictdiffer`)
+     - A compressed representation of the buffer segment:
+       - A sequence of superblock indexes
+       - New blocks encountered
+       - New superblocks encountered
+
 ## Supporting Format Utilities
+
+The following helper functions are used throughout the specification. Each is defined here with a description sufficient for implementation:
+
 ```
 _pad_to(x: bytes, multiple: int) -> bytes
 ```
-pads `x` with null bytes to reach the next multiple of `multiple`
+Pads the input byte string `x` with null bytes (`b'\x00'`) so that its length is a multiple of `multiple`. If already aligned, returns `x` unchanged.
 
 ```
 _split_v86_savestate(file_content: bytes) -> Tuple[bytes, bytes, bytes]
 ```
-Parses and returns `(header_block, info_block, buffer_block)` from a raw save
+Given the raw bytes of a v86 savestate, returns a tuple `(header_block, info_block, buffer_block)`. The header is the first 16 bytes. The length of the info block is read from the 4th 32-bit little-endian integer in the header. The info block follows the header, and the buffer block follows the info block (with padding to a 4-byte boundary if needed).
 
 ```
 _recombine_v86_savestate(components: Tuple[bytes, bytes, bytes]) -> bytes
 ```
-Reconstructs a full binary from the three parts
+Given a tuple `(header_block, info_block, buffer_block)`, reconstructs the original savestate as bytes. Pads the info block to a 4-byte boundary if needed, then concatenates header, padded info, and buffer.
 
 ```
-_make_aligned_buffer_block(info_block, buffer_block, block_size)
+_make_aligned_buffer_block(info_block: bytes, buffer_block: bytes, block_size: int) -> bytes
 ```
-Returns concatenated aligned blocks from memory regions specified in `buffer_infos`
+Given the info block and buffer block, and a block size, extracts each memory region described in `buffer_infos` from the info block, pads each region to a multiple of `block_size`, and concatenates them in order. The result is a single aligned buffer block.
 
 ```
-_make_unaligned_buffer_block(info_block, aligned_buffer_block, block_size)
+_make_unaligned_buffer_block(info_block: bytes, aligned_buffer_block: bytes, block_size: int) -> bytes
 ```
-Removes per-region padding to restore the original buffer
-
+Given the info block and an aligned buffer block, removes the per-region padding (using the original lengths from `buffer_infos` in the info block) to reconstruct the original buffer block.
 
 ## Encoding Specification
 
 ```
-encode(v86state_array: Sequence[bytes] -> bytes
+encode(v86state_array: Sequence[bytes]) -> bytes
 ```
 **Parameters**:
-- `v86state_array`: A list of raw v86 savestate binaries
+- `v86state_array`: List of raw v86 savestate binaries
 
 **Returns**
 - A msgpack-encoded savestream containing compressed v86 save states
 
 **Encoding Procedure**
-1. Split State into Components
-   Use _split_v86_savestates() to extract
-   - `header_block`
-   - `info_block`
-   - `buffer_block`
-2. Align and Expand Buffers
-   - Use `buffer_infos` inside `info_block` to extract the subregions from `buffer_block`
-   - Each subregion is padded to `super_block_size`
-   - All padded subregions are concatenated into a single aligned buffer
-   - This buffer is padded to `super_block_size`
-3. Deduplicate blocks
-   - Divide the aligned buffer into super blocks of size `super_block_size`
-   - Assign each unique super block an ID (`sid`) in `known_super_blocks`
-   - Each super block is divided into chunks of size `block_size`
-   - Each chunk is given an ID (`bid`) in `known_blocks`
-4. Track Block/Superblock Diffs
-   For each frame:
-   - Record new `block_id: block_bytes` in `new_blocks`
+1. Split each state into `header_block`, `info_block`, `buffer_block` using `_split_v86_savestate()`
+2. Align and expand buffers:
+   - Use `buffer_infos` in `info_block` to extract subregions from `buffer_block`
+   - Each subregion is padded to `block_size` (default: 256 bytes)
+   - All padded subregions are concatenated and the result is padded to `super_block_size` (default: 256 × 256 bytes)
+3. Deduplicate blocks:
+   - Divide the aligned buffer into superblocks of size `super_block_size`
+   - Assign each unique superblock an ID (`sid`) in `known_super_blocks`
+   - Each superblock is divided into chunks of size `block_size`, each chunk gets a `bid` in `known_blocks`
+4. Track block/superblock diffs:
+   - For each frame, record new `block_id: block_bytes` in `new_blocks`
    - Record new `super_id: [block_ids]` in `new_super_blocks`
-   - Store sequence of superblock IDs in `super_sequence`
-5. Delta Encode Metadata
-   - Compute a JSON diff between current `info_json` and the previous one
-     - Python implementation uses the `dictdiffer` library to do this
+   - Store the sequence of superblock IDs in `super_sequence`
+5. Delta encode metadata:
+   - Compute a JSON diff (using `dictdiffer.diff`) between the current and previous `info_json`
    - Store the encoded diff as UTF-8 bytes as `info_patch`
-6. Store Encoded Entry
-   Each frame is stored as a dictionary:
-   ```
-   {
-     'header_block': ...,
-     'info_patch': ...,
-     'super_sequence': [...],
-     'new_blocks': {bid: bytes, ...},
-     'new_super_blocks': {sid: [bid, ...], ...}
-   }
-   ```
-7. Serialize with MessagePack
+6. Store encoded entry:
+   - Each frame is a dictionary:
+     ```
+     {
+       'header_block': ...,
+       'info_patch': ...,
+       'super_sequence': [...],
+       'new_blocks': {bid: bytes, ...},
+       'new_super_blocks': {sid: [bid, ...], ...}
+     }
+     ```
+7. Serialize the list of frames with MessagePack
 
 ## Decoding Specification
 
 ```
-decode(savestream_bytes: bytes) -> Sequence[bytes]
+decode(savestream_bytes: bytes) -> Generator[bytes, None, None]
 ```
 **Parameters**
-- `savestream_bytes`: A msgpack-encoded savestream containing compressed v86 save states
+- `savestream_bytes`: A msgpack-encoded savestream
 
 **Returns**
-- A generator that produces decompressed v86 save states one at a time as bytes
+- A generator yielding decompressed v86 save states as bytes
 
 **Decoding Procedure**
-1. Unpack the savestream
-   - Use msgpack to get a list of frame dictionaries
-2. Initialize Known Block Stores
+1. Unpack the savestream (msgpack list of frame dicts)
+2. Initialize known block stores:
    - `known_blocks = {0: b'\x00' * 256}`
    - `known_super_blocks = {0: [0] * 256}`
-3. Iterate Through Frames
-   For each frame:
+3. For each frame:
    - Add `new_blocks` and `new_super_blocks` to stores
-   - Apply `info_patch` to previous info
-   - Confert the resulting `info_json` to a UTF-8 `info_block`
-   - Reconstruct aligned buffer from `super_sequence`:
-     - Concatenate `known_blocks[bid]` using the `known_super_blocks[sid]` mapping
+   - Apply `info_patch` (JSON diff) to previous info using `dictdiffer.patch`
+   - Convert the resulting info to a UTF-8 `info_block`
+   - Reconstruct aligned buffer from `super_sequence` by concatenating `known_blocks[bid]` using `known_super_blocks[sid]`
    - Use `_make_unaligned_buffer_block(info_block, aligned_buffer)` to remove padding
    - Recombine with `_recombine_v86_savestate`
    - Yield the full savestate
-  
 
 ## Decode One Specification
 ```
 decode_one(savestream_bytes: bytes, index: int) -> bytes
 ```
 **Parameters**
-- `savestream_bytes`: A msgpack-encoded savestream containing compressed v86 save states
-- `index`: An integer representing the save state within the savestream to decode
+- `savestream_bytes`: A msgpack-encoded savestream
+- `index`: Integer index of the save state to decode
 
 **Returns**
-- The decompressed v86 save state pulled from the savestream at the given `index`
+- The decompressed v86 save state at the given `index`
 
 **Decoding Procedure**
-- Utilizes the `decode` function's generator to reconstruct the save states one at a time until the save state at the chosen `index` is reached
-- Returns state found at `index`
+- Iterates using the `decode` generator until the requested index is reached
+- Returns the state at `index`, or raises `IndexError` if out of range
 
 ## Decode Length Specification
 ```
 decode_len(savestream_bytes: bytes) -> int
 ```
-
 **Parameters**
-- `savestream_bytes`: A msgpack-encoded savestream containing compressed v86 save states
+- `savestream_bytes`: A msgpack-encoded savestream
 
 **Returns**
 - The number of states in the savestream
 
 **Procedure**
 - Unpacks the savestream using msgpack
-- Returns the length of the msgpack-decoded savestream
+- Returns the length of the decoded list
 
 ## Trim Savestream Specification
 ```
 trim(savestream_bytes: bytes, start_index: int, end_index: int | None = None) -> bytes
 ```
-
- **Parameters**
- - `savestream_bytes`: A msgpack-encoded savestream containing compressed v86 save states
- - `start_index` Integer representing the starting index of the range to keep (inclusive)
- - `end_index` Integer representing the ending index of the range to keep (exclusive)
+**Parameters**
+- `savestream_bytes`: A msgpack-encoded savestream
+- `start_index`: Starting index of the range to keep (inclusive)
+- `end_index`: Ending index of the range to keep (exclusive, or None for end)
 
 **Returns**
 - A new savestream containing only the specified range of savestates
 
 **Trimming Procedure**
-- Check if starting index is valid
-- Create an empty array to store the save states to keep
-- Iterate through `savestream_bytes` and append those states to the empty array within the specified range
-- Return a msgpack-encoded savestream of the states that were kept
-
-
-## Command Line Interface
-
-The savestream module supports a CLI with four subcommands
-
-**Encode**
-```sh
-python -m savestreams encode [input_files] output_file.savestream
-```
-This encodes the given input files into a savestream called output_file.savestream
-
-**Decode**
-```sh
-python -m savestreams decode input.savestream output_dir [--index n]
-```
-This decodes the given input savestream to a list of save states stored in the named output directory. If an optional index is provided, it will only store the indexed savestate in the output directory
-
-**Trim**
-```sh
-python -m savestreams trim input.savestream output.savestream start_index [end_index]
-```
-This trims the given savestate using the specified range. If no ending index is given, the command will trim from the starting index to the end. Note the range works similar to Python slicing
-
-**Info**
-```sh
-python -m savestreams info input.savestream
-```
-This will output information about the savestream including:
-- Length of savestream
-- Total size of savestream
-- Average size per save in savestream
+- Checks if starting index is valid
+- Iterates through `savestream_bytes` using `decode` and appends states in the specified range
+- Returns a msgpack-encoded savestream of the kept states (re-encoded)
 
 ## Savestream File Format Summary
-A savestream is a msgpack-encoded list of frames. Each frame is structured like so:
+A savestream is a msgpack-encoded list of frames. Each frame is structured as:
 ```
 {
-  'header_block': bytes
-  'info_patch: bytes,    # UTF-8 JSON diff
-  'super_sequence': List[int]
+  'header_block': bytes,
+  'info_patch': bytes,    # UTF-8 JSON diff (dictdiffer)
+  'super_sequence': List[int],
   'new_blocks': Dict[int, bytes],
-  'new_super_blocks': Dict[Int, List[int]]
+  'new_super_blocks': Dict[int, List[int]]
 }
 ```
-     
+
