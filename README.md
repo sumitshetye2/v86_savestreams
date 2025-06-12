@@ -2,6 +2,10 @@
 
 Efficient and lossless compression and decompression of [v86](https://copy.sh/v86/) virtual machine savestates.
 
+When applied to a sequence of savestates an Android v86 VM, frames after then initial state are orders of magnitude smaller:
+![Android Encoding Results](https://github.com/user-attachments/assets/7f05c9e4-efc3-4adb-851c-8611134a999e)
+
+
 This repository provides:
 - A specification of the savestream file format
 - A reference implementation of savestream encoding and decoding in Python
