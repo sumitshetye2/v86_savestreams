@@ -7,6 +7,9 @@ This repository provides:
 - A reference implementation of savestream encoding and decoding in Python
 - A command-line utility for transforming `v86state.bin` files into savestreams and back
 
+# Savestates Corpus
+A corpus of test data can be found [here] (https://zenodo.org/records/15604193). It contains savestates for MS-DOS, Windows 98, and Android.
+
 ## Installation
 
 It is recommended that you set up a [Python virtual environment](https://docs.python.org/3/library/venv.html) first.
