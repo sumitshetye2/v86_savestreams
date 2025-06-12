@@ -53,3 +53,13 @@ savestreams info examples/msdos.savestream
 pip install .[test]
 pytest
 ```
+
+# Citing
+
+    @mastersthesis{shetye_savestreams_2025,
+      author = {Sumit Shetye},
+      title = {Losslessly Compressing Software Interactions with Savestreams},
+      school = {University of California, Santa Cruz},
+      month = {June},
+      year = {2025}
+    }
